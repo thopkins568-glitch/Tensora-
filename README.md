@@ -1,6 +1,7 @@
 ⭐ Tensora
 
 A Benchmark for Tension-Coupled Optimization
+
 “Make the space itself do the work.”
 
 
@@ -16,12 +17,11 @@ Tensora is a clean, falsifiable, open-source experiment testing one precise hypo
 
 No mysticism.
 No hand-wavey physics.
-No claims about exotic computation.
+No exotic claims.
 
-Just controlled trials, identical seeds, auditable FLOP counting, and a single brutally honest question:
+Just controlled trials, identical seeds, auditable FLOP counting — and one brutally honest question:
 
 Does tension help? Or not?
-
 Either answer is a discovery.
 
 
@@ -29,7 +29,7 @@ Either answer is a discovery.
 
 🎯 The Core Hypothesis
 
-Many classical algorithms explore search spaces “blind,” guided only by cost functions. Tensora adds a second mechanism:
+Most classical algorithms explore search spaces “blind,” guided only by a cost function. Tensora adds a second mechanism:
 
 The Tension Field
 
@@ -44,14 +44,15 @@ Smooths the search landscape
 Encourages faster convergence
 
 
-If this mechanism reduces the effective dimensionality of the search, then:
+If this reduces the effective dimensionality of the search, then:
 
-…the tension-augmented solver should use fewer FLOPs than the baseline.
+> The tension-augmented solver should use fewer FLOPs than the baseline.
+
+
 
 That’s the entire point of the project.
-
-Not performance.
 Not speed.
+Not wall-time.
 Not hype.
 FLOP reduction under controlled conditions.
 
@@ -62,7 +63,7 @@ FLOP reduction under controlled conditions.
 
 Every benchmark records:
 
-Exact FLOPs (via custom instrumented counters)
+Exact FLOPs (custom instrumented counters)
 
 Iterations to convergence
 
@@ -75,7 +76,7 @@ Random seed + full solver config
 
 Full reproducibility.
 Full transparency.
-No profiler tricks, no inference, no guesswork.
+No tricks. No profiler inference. No guesswork.
 
 
 ---
@@ -93,9 +94,9 @@ Each problem includes:
 
 Baseline solver: standard algorithm
 
-Tension solver: same algorithm + tension layer
+Tension solver: identical algorithm + tension layer
 
-Identical seeds
+Same seeds, same configs
 
 
 If it’s not fair, it’s not Tensora.
@@ -119,9 +120,7 @@ tensora/
 ├── run.py
 └── README.md
 
-Everything is minimal.
-Everything is where you expect it.
-No noise.
+Minimal. Predictable. Clean.
 
 
 ---
@@ -134,9 +133,8 @@ pip install -r requirements.txt
 
 python run.py --problem tsp --size 64 --tension 0.15 --seed 42
 
-This produces a JSON file containing all metrics — FLOPs included.
-
-That’s the heartbeat of Tensora.
+Outputs a fully reproducible JSON log — FLOPs included.
+That’s Tensora’s heartbeat.
 
 
 ---
@@ -149,7 +147,7 @@ TSP	64	–	–	–	–	pending
 Rastrigin	512-d	–	–	–	–	pending
 
 
-Numbers appear only after they’ve survived reproducibility tests.
+Numbers appear only after they survive reproducibility tests.
 Zero hype.
 
 
@@ -159,7 +157,7 @@ Zero hype.
 
 Hookean spring-like coupling:
 
-F_tension(i) = Σ_j w(i,j) · k · (x_j - x_i)
+Fₜ(i) = Σⱼ w(i,j) · k · (xⱼ − xᵢ)
 
 Where:
 
@@ -167,7 +165,7 @@ w(i,j) = coupling weight
 
 k = tension strength
 
-x_i, x_j = state vectors
+xᵢ, xⱼ = state vectors
 
 
 Fully documented in docs/tension_formulation.md.
@@ -177,12 +175,12 @@ Fully documented in docs/tension_formulation.md.
 
 🧘 Scientific Commitments
 
-Tensora follows 4 uncompromising rules:
+Tensora follows four uncompromising rules:
 
 1. Exact FLOP counting — every operation accounted for.
 
 
-2. Falsifiability — negative results are published immediately.
+2. Falsifiability — negative results get published immediately.
 
 
 3. Reproducibility — seeds, configs, and logs stored forever.
@@ -203,8 +201,8 @@ Then we publish that. That’s science.
 Q: Is this analog/quantum/exotic computing?
 No. Pure classical computation with explicit FLOP metrics.
 
-Q: Why FLOPs instead of wall time?
-Because FLOPs are hardware-independent and test the algorithm, not your CPU.
+Q: Why FLOPs instead of wall-time?
+Because FLOPs test the algorithm, not your hardware.
 
 
 ---
@@ -227,7 +225,3 @@ Whether tension reduces FLOPs or not, the answer will be real — because the me
 
 Welcome to Tensora.
 Let the numbers speak.
-
-
----
-
