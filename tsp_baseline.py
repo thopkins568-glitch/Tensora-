@@ -1,61 +1,85 @@
-# baseline_solver.py
+# tsp_baseline.py
 """
-Baseline solver used for all Tensora benchmarks.
+Baseline TSP problem definition for Tensora.
 
-This solver:
-  - Maintains a single current state vector
-  - Computes its energy via problem.energy()
-  - Proposes a small random move via problem.propose()
-  - Accepts if energy improves
-  - Counts FLOPs via the GLOBAL_FLOPS instrumented utilities
+Implements:
+  - initial_state()
+  - energy(x)
+  - propose(x)
+  - converged(e)
 
-This gives a universal, minimal baseline algorithm.
+This version keeps everything extremely minimal and deterministic so that
+FLOP counting is clean, controlled, and comparable across solvers.
 """
 
 import numpy as np
 from flops_counter import GLOBAL_FLOPS
-from solver import Solver
 
 
-class BaselineSolver(Solver):
-    def __init__(self, problem):
-        super().__init__()
-        self.problem = problem
-        self.x = None
-        self.current_energy = None
-
-    # ---------------------------------------------------------
-    # Initialization
-    # ---------------------------------------------------------
-    def initialize(self):
-        # Get initial state from the problem
-        self.x = self.problem.initial_state()
-
-        # Compute starting energy
-        self.current_energy = self.problem.energy(self.x)
-
-    # ---------------------------------------------------------
-    # One solver iteration
-    # ---------------------------------------------------------
-    def step(self):
+class TSP:
+    def __init__(self, coords):
         """
-        Returns:
-          - best energy after this step
-          - done (bool)
+        coords: (N, 2) array of city coordinates
         """
+        self.coords = np.array(coords, dtype=float)
+        self.N = len(coords)
 
-        # Propose a new state
-        x_new = self.problem.propose(self.x)
+        # Set a fixed convergence threshold (optional, simple)
+        self.convergence_eps = 1e-6
 
-        # Compute energy
-        e_new = self.problem.energy(x_new)
+    # ---------------------------------------------------------
+    #  State Representation
+    # ---------------------------------------------------------
+    # x is a permutation of N cities (integer vector)
+    # ---------------------------------------------------------
 
-        # Accept if better
-        if e_new < self.current_energy:
-            self.x = x_new
-            self.current_energy = e_new
+    def initial_state(self):
+        GLOBAL_FLOPS.count_add(self.N)   # trivial cost for constructing array
+        return np.arange(self.N)
 
-        # Problem may define its own convergence rule
-        done = self.problem.converged(self.current_energy)
+    def energy(self, x):
+        """
+        Tour length.
 
-        return float(self.current_energy), done
+        Computes:
+          sum over i of distance(x[i], x[i+1])
+        """
+        coords = self.coords[x]
+        diffs = coords[1:] - coords[:-1]
+
+        # FLOPs for subtract + square + add + sqrt per pair
+        # diff = (dx, dy) → dx^2 + dy^2 → sqrt
+        GLOBAL_FLOPS.count_add(2 * (self.N - 1))     # two subtractions
+        GLOBAL_FLOPS.count_mul(2 * (self.N - 1))     # dx*dx, dy*dy
+        GLOBAL_FLOPS.count_add((self.N - 1))         # dx2 + dy2
+        GLOBAL_FLOPS.count_sqrt((self.N - 1))
+
+        segment_lengths = np.sqrt((diffs ** 2).sum(axis=1))
+        return float(segment_lengths.sum())
+
+    def propose(self, x):
+        """
+        Returns a slightly modified permutation by swapping two indices.
+
+        This is intentionally simple (O(1) FLOPs).
+        """
+        x_new = x.copy()
+
+        # Pick two positions to swap
+        i, j = np.random.randint(0, self.N, size=2)
+
+        # FLOPs for swap: 3 assignments (count as adds)
+        GLOBAL_FLOPS.count_add(3)
+
+        tmp = x_new[i]
+        x_new[i] = x_new[j]
+        x_new[j] = tmp
+
+        return x_new
+
+    def converged(self, e):
+        """
+        Stops when energy stabilizes.
+        Very loose convergence rule.
+        """
+        return e < self.convergence_eps
