@@ -1,3 +1,4 @@
+# spring_tension.py
 """
 Spring-based tension field for Tensora.
 
@@ -15,7 +16,7 @@ All FLOPs are counted explicitly.
 """
 
 import numpy as np
-from tensora.core.flops_counter import GLOBAL_FLOPS
+from flops_counter import GLOBAL_FLOPS
 
 
 class SpringTensionField:
@@ -41,20 +42,18 @@ class SpringTensionField:
             Total ≈ 4N FLOPs
         """
 
-        # Number of dimensions
-        N = x.shape[0] if hasattr(x, "shape") else len(x)
+        # Number of elements in x
+        N = x.size if hasattr(x, "size") else len(x)
 
         # 1. Compute mean
         m = np.mean(x)
-        GLOBAL_FLOPS.count_add(N)      # N additions in sum
-        GLOBAL_FLOPS.count_add(1)      # division → cost ≈ 1 FLOP
+        GLOBAL_FLOPS.count_add(N)  # N additions
+        GLOBAL_FLOPS.count_div(1)  # 1 division for mean
 
-        # 2. m - x   (vector subtract)
-        GLOBAL_FLOPS.count_add(N)
+        # 2. Compute displacement (mean minus state vector)
+        GLOBAL_FLOPS.count_sub(N)
+        dx = m - x
 
-        delta = m - x
-
-        # 3. k * delta  (vector scale)
-        GLOBAL_FLOPS.count_add(N)
-
-        return self.k * delta
+        # 3. Scale by tension constant
+        GLOBAL_FLOPS.count_mul(N)
+        return self.k * dx
