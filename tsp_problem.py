@@ -9,63 +9,122 @@ Provides:
     - propose(tour) -> neighbor tour (2-opt style), counts FLOPs
     - converged(energy) -> bool, simple tolerance-based check
  - internal helpers: compute_distance_matrix, path_length (with FLOP accounting)
+
+This version is robust to several possible FLOP-counter module names / APIs
+and uses the precise FLOP formula for the vectorized distance matrix computation:
+  For n points in d dims: per ordered pair FLOPs = d (sub) + d (square) + (d-1) (adds) + 1 (sqrt)
+  => per-pair = 3*d - 1
+Total for full n x n matrix = n^2 * (3*d - 1)
 """
 
+from __future__ import annotations
 import numpy as np
-from flops_counter import GLOBAL_FLOPS
+from typing import Optional
+
+# Try to locate a GLOBAL_FLOPS object under common names/locations.
+# This makes the problem module resilient to variations in how the FLOP counter was implemented.
+def _locate_global_flops():
+    candidates = [
+        ("tensora.core.flop_counter", "GLOBAL_FLOPS"),
+        ("flop_counter", "GLOBAL_FLOPS"),
+        ("flops_counter", "GLOBAL_FLOPS"),
+        ("tensora.core.flops_counter", "GLOBAL_FLOPS"),
+        ("tensora.core.flop_counter", "FLOPS"),
+        ("flop_counter", "FLOPS"),
+    ]
+    for module_name, attr in candidates:
+        try:
+            mod = __import__(module_name, fromlist=[attr])
+            obj = getattr(mod, attr, None)
+            if obj is not None:
+                return obj
+        except Exception:
+            continue
+    # As a last resort, check global namespace if the user injected a GLOBAL_FLOPS
+    try:
+        from globals import GLOBAL_FLOPS as gf  # unlikely, but harmless
+        return gf
+    except Exception:
+        pass
+    return None
 
 
-# ---- FLOP helper (adapts to whichever API your GLOBAL_FLOPS exposes) ----
+GLOBAL_FLOPS = _locate_global_flops()
+
+
 def add_flops(n: int):
-    """Robustly add n FLOPs to GLOBAL_FLOPS regardless of method name."""
+    """
+    Add n FLOPs to the global counter in a robust way.
+    Tries a number of common method/attribute names.
+    If no counter found, silently no-op (safe during early development).
+    """
     if n is None or n == 0:
         return
-    # try common names in order of likelihood
-    for name in ("add", "count_add", "count", "inc", "count_flops", "add_flops"):
-        fn = getattr(GLOBAL_FLOPS, name, None)
+    if GLOBAL_FLOPS is None:
+        # no counter available; silently ignore to avoid crashing in dev
+        return
+
+    # prefer direct well-known methods
+    for method in ("add", "count_add", "count", "inc", "increment", "add_flops", "count_flops", "record"):
+        fn = getattr(GLOBAL_FLOPS, method, None)
         if callable(fn):
             try:
                 fn(int(n))
                 return
             except TypeError:
-                # maybe the API expects no args (unlikely) — ignore
+                # some implementations might expose a different signature; keep trying
                 pass
-    # fallback: try 'flops' attribute
+
+    # try common attribute-based accumulation
     if hasattr(GLOBAL_FLOPS, "flops"):
         try:
-            GLOBAL_FLOPS.flops = int(GLOBAL_FLOPS.flops) + int(n)
-            return
+            # support both numeric and property-like attribute
+            current = getattr(GLOBAL_FLOPS, "flops")
+            try:
+                setattr(GLOBAL_FLOPS, "flops", int(current) + int(n))
+                return
+            except Exception:
+                # if setting fails, continue to other fallbacks
+                pass
         except Exception:
             pass
-    # last-resort: try snapshot/add via add if present
+
+    # try snapshot/add fallback
     if hasattr(GLOBAL_FLOPS, "snapshot") and hasattr(GLOBAL_FLOPS, "add"):
         try:
             GLOBAL_FLOPS.add(int(n))
             return
         except Exception:
             pass
-    # If nothing worked, silently ignore (safe fallback during development)
+
+    # give up quietly (development mode)
     return
 
 
 # ---- Utilities with FLOP accounting ----
-def compute_distance_matrix(points: np.ndarray):
+def compute_distance_matrix(points: np.ndarray) -> np.ndarray:
     """
     Compute full pairwise Euclidean distance matrix and account FLOPs.
 
-    For n points in d dims:
-      - For each pair: d subtractions, d squares, (d-1) adds, 1 sqrt
-      -> FLOPs per pair ≈ (3*d - 1)  (as discussed)
-      -> total ~ n^2 * (3*d - 1)
-    We'll count the symmetric matrix (all pairs) for simplicity.
+    Vectorized computation does:
+      diff = points[:, None, :] - points[None, :, :]   # n^2 * d subtractions
+      diff * diff                                       # n^2 * d multiplications (squares)
+      sum over last axis (d-1 adds per pair)            # n^2 * (d-1) adds
+      sqrt per pair                                      # n^2 * 1
+
+    Total FLOPs per ordered pair = 3*d - 1
+    Total FLOPs for full matrix = n^2 * (3*d - 1)
     """
+    points = np.asarray(points)
+    if points.ndim != 2:
+        raise ValueError("points must be a 2D array of shape (n, d)")
     n, d = points.shape
-    # cost estimate
     per_pair = 3 * d - 1
-    total_flops = n * n * per_pair
+    total_flops = int(n * n * per_pair)
     add_flops(total_flops)
 
-    diff = points[:, None, :] - points[None, :, :]
+    # compute distances (vectorized)
+    diff = points[:, None, :] - points[None, :, :]  # shape (n, n, d)
     dist = np.sqrt(np.sum(diff * diff, axis=-1))
     return dist
 
@@ -73,97 +132,114 @@ def compute_distance_matrix(points: np.ndarray):
 def path_length(order: np.ndarray, dist: np.ndarray) -> float:
     """
     Compute the total length of a TSP tour given a (full) distance matrix.
-    We count 1 FLOP per add (summing the lengths). Lookups are not FLOPs.
+
+    We count 1 FLOP per addition when summing the tour length. Array lookups are
+    memory ops and do not count as FLOPs.
     """
+    order = np.asarray(order, dtype=int)
     m = order.size
-    # m additions
-    add_flops(m)
+    # m additions to accumulate the tour length (one per edge)
+    add_flops(int(m))
     total = 0.0
     for i in range(m):
         j = (i + 1) % m
-        total += dist[order[i], order[j]]
+        total += float(dist[order[i], order[j]])
     return float(total)
 
 
 # ---- Problem class ----
 class TSPProblem:
-    def __init__(self, n_cities: int = 32, seed: int = None, coord_scale: float = 1.0, tol: float = 1e-9):
+    def __init__(
+        self,
+        n_cities: int = 32,
+        seed: Optional[int] = None,
+        coord_scale: float = 1.0,
+        tol: float = 1e-9,
+        precompute_distance_matrix: bool = True,
+    ):
         """
         Args:
             n_cities: number of cities
             seed: RNG seed for reproducibility
             coord_scale: scale of coordinates
             tol: convergence tolerance for energy (used in `converged`)
+            precompute_distance_matrix: if True, compute distance matrix at init (counts FLOPs once)
         """
         if seed is not None:
-            np.random.seed(seed)
+            np.random.seed(int(seed))
         self.n = int(n_cities)
         self.coords = np.random.uniform(0.0, coord_scale, size=(self.n, 2))
-        # precompute distance matrix (counts FLOPs inside)
-        self.dist = compute_distance_matrix(self.coords)
         self.tol = float(tol)
-        # optional known optimum (None by default)
-        self.known_best = None
+        self.known_best: Optional[float] = None
+
+        if precompute_distance_matrix:
+            # distance computation counts FLOPs (one-time cost)
+            self.dist = compute_distance_matrix(self.coords)
+        else:
+            self.dist = None
 
     # --- interface used by solvers ---
     def initial_state(self) -> np.ndarray:
         """Return an initial tour ordering (numpy array of ints)."""
-        # a simple initial tour: 0..n-1
         order = np.arange(self.n, dtype=int)
-        # small FLOP count for copying / creation (negligible but counted)
-        add_flops(self.n)
+        # small FLOP count for creating/copying the vector (heuristic)
+        add_flops(int(self.n))
         return order
 
     def energy(self, order: np.ndarray) -> float:
         """Return the tour length (float). Counts FLOPs via path_length."""
-        return path_length(order, self.dist)
+        if self.dist is None:
+            # compute on the fly (counts FLOPs each time)
+            dist = compute_distance_matrix(self.coords)
+        else:
+            dist = self.dist
+        return path_length(order, dist)
 
     def propose(self, order: np.ndarray) -> np.ndarray:
         """
         Propose a neighbor by performing a random 2-opt reversal on a copy.
 
-        FLOP accounting:
-          - selecting indices (random ints): negligible (random generator cost)
-          - copying array of length n: count n
-          - reversing slice: count approx slice length
+        FLOP accounting (heuristic):
+          - copying the array: n operations
+          - reversing a slice of length L: ~L operations
+          (random index generation cost is not included as FLOPs)
         """
+        order = np.asarray(order, dtype=int)
         n = order.size
-        i = np.random.randint(0, n)
-        j = np.random.randint(0, n)
+        i = int(np.random.randint(0, n))
+        j = int(np.random.randint(0, n))
+
         if i == j:
-            # small modification: rotate by 1 to avoid no-op (counts 1 flop)
+            # rotate by one to avoid no-op
             proposed = np.roll(order, 1)
             add_flops(1)
             return proposed
 
-        # ensure i < j
         if i > j:
             i, j = j, i
 
-        # copy (account for copying cost)
         proposed = order.copy()
-        add_flops(n)  # copy cost heuristic
+        add_flops(int(n))  # copy cost heuristic
 
-        # perform 2-opt reversal on slice [i:j]
         slice_len = max(1, j - i)
-        # reversing: slice_len/2 swaps ~ slice_len ops (rough)
-        add_flops(slice_len)
+        add_flops(int(slice_len))  # reversal cost heuristic
+
+        # perform in-place reversal of slice
         proposed[i:j] = proposed[i:j][::-1]
         return proposed
 
-    def converged(self, current_energy: float, best_so_far: float = None, iter_no: int = None) -> bool:
+    def converged(self, current_energy: float, best_so_far: Optional[float] = None, iter_no: Optional[int] = None) -> bool:
         """
-        Simple convergence test:
-         - If known_best provided and current_energy <= known_best + tol -> converged
-         - If absolute improvement small enough (compared to best_so_far) -> converged
-         - Otherwise keep running. Most solvers will use this in conjunction with max-iterations.
+        Convergence test:
+          - If known_best provided and current_energy <= known_best + tol -> converged
+          - If best_so_far provided and improvement is smaller than tol (absolute or relative) -> converged
+          - Otherwise: not converged
         """
         if self.known_best is not None:
             if current_energy <= self.known_best + self.tol:
                 return True
 
         if best_so_far is not None:
-            # relative improvement check
             if abs(current_energy - best_so_far) <= max(self.tol, self.tol * abs(best_so_far)):
                 return True
 
@@ -172,7 +248,6 @@ class TSPProblem:
 
 # ---- Quick self-test runner (manual use) ----
 if __name__ == "__main__":
-    # quick sanity check (not a unit test)
     p = TSPProblem(n_cities=16, seed=0)
     tour = p.initial_state()
     e = p.energy(tour)
